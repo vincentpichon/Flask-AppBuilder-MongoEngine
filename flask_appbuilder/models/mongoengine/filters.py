@@ -143,3 +143,14 @@ class MongoEngineFilterConverter(BaseFilterConverter):
         ("is_integer", [FilterEqual, FilterNotEqual, FilterGreater, FilterSmaller]),
         ("is_float", [FilterEqual, FilterNotEqual, FilterGreater, FilterSmaller]),
     )
+
+
+class CustomFilter(BaseFilter):
+
+    def apply(self, query, value: str):
+        if hasattr(query, "query_filters"):
+            query.query_filters.append({self.column_name: value})
+            return query
+        else:
+            flt = {"%s" % self.column_name: value}
+            return query.filter(**flt)

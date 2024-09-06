@@ -15,6 +15,8 @@ from mongoengine.fields import (
 )
 
 from . import filters
+from .filters import CustomFilter, FilterContains, FilterEqual, FilterNotContains, FilterNotEqual, FilterNotStartsWith, \
+    FilterStartsWith
 from ..base import BaseInterface
 from ..._compat import as_unicode
 from ...const import (
@@ -49,42 +51,65 @@ class MongoEngineInterface(BaseInterface):
         return self.obj.__name__
 
     def query(
-        self,
-        filters=None,
-        order_column="",
-        order_direction="",
-        page=None,
-        page_size=None,
+            self,
+            filters=None,
+            order_column="",
+            order_direction="",
+            page=None,
+            page_size=None,
     ):
-        # base query : all objects
-        objs = self.obj.objects
 
-        # apply filters first if given
-        if filters:
-            objs = filters.apply_all(objs)
+        if page is None:
+            page = 0
+
+        if page_size is None:
+            page_size = 50
+
+        # generate filter
+        _fil = {}
+        if filters is not None:
+            for fil_id, _val in enumerate(filters.values):
+                if isinstance(_val, list):
+                    _val = _val[0]
+                _col_name = filters.filters[fil_id].column_name
+                if isinstance(filters.filters[fil_id], CustomFilter | FilterEqual):
+                    _fil[_col_name] = _val
+                elif isinstance(filters.filters[fil_id], FilterNotEqual):
+                    _fil[f"{_col_name}__ne"] = _val
+                elif isinstance(filters.filters[fil_id], FilterStartsWith):
+                    _fil[f"{_col_name}__startswith"] = _val
+                elif isinstance(filters.filters[fil_id], FilterNotStartsWith):
+                    _fil[f"{_col_name}__not__startswith"] = _val
+                elif isinstance(filters.filters[fil_id], FilterContains):
+                    _fil[f"{_col_name}__icontains"] = _val
+                elif isinstance(filters.filters[fil_id], FilterNotContains):
+                    _fil[f"{_col_name}__not__icontains"] = _val
+
+        offset = (page or 0) * page_size
+        pagin = self.obj.objects(**_fil).skip(offset).limit(offset + page_size)
 
         # get the count of all items, either filtered or unfiltered
-        count = objs.count()
-
+        count = len(self.obj.objects(**_fil))
+        # logging.debug('counter : ' + str(count))
         # order the data
         if order_column != "":
-            if hasattr(getattr(self.obj, order_column), "_col_name"):
+            ## @brief split order_column in case of embedded documents
+            _order_column = order_column.split(".")[0]
+            if hasattr(getattr(self.obj, _order_column), "_col_name"):
                 order_column = getattr(getattr(self.obj, order_column), "_col_name")
             if order_direction == "asc":
-                objs = objs.order_by("-{0}".format(order_column))
+                pagin = pagin.order_by(f"-{order_column}")
             else:
-                objs = objs.order_by("+{0}".format(order_column))
+                pagin = pagin.order_by(f"+{order_column}")
 
+        # logging.debug('page_size : ' + str(page_size))
         if page_size is None:  # error checking and warnings
             if page is not None:
-                log.error("Attempting to get page %s but page_size is undefined", page)
+                logging.error(f"Attempting to get page {page} but page_size is undefined")
             if count > 100:
-                log.warn("Retrieving %s %s items from DB", count, self.obj)
-        else:  # get data segment for paginated page
-            offset = (page or 0) * page_size
-            objs = objs[offset : offset + page_size]
+                logging.warning(f"Retrieving {count} {self.obj!s} items from DB")
 
-        return count, objs
+        return count, pagin
 
     def is_object_id(self, col_name):
         try:
@@ -257,7 +282,7 @@ class MongoEngineInterface(BaseInterface):
         for col_name in self.get_columns_list():
             for conversion in self.filter_converter_class.conversion_table:
                 if getattr(self, conversion[0])(col_name) and not self.is_object_id(
-                    col_name
+                        col_name
                 ):
                     ret_lst.append(col_name)
         return ret_lst
@@ -309,10 +334,13 @@ class MongoEngineInterface(BaseInterface):
         return [getattr(item, pk_name) for item in lst]
 
     def get_related_fk(self, model):
-        for col_name in self.get_columns_list():
-            if self.is_relation(col_name):
-                if model == self.get_related_model(col_name):
-                    return col_name
+        res = None
+        if hasattr(self, "obj") and hasattr(self.obj, "related_to"):
+            res = self.obj.related_to
+
+        if res is None:
+            res = super().get_related_fk(model)
+        return res
 
     def get_pk_name(self):
         return "id"

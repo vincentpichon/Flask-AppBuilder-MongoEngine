@@ -77,11 +77,18 @@ class AppBuilder:
         from flask import Flask
         from flask_appbuilder import AppBuilder
         from flask_appbuilder.security.mongoengine.manager import SecurityManager
-        from flask_mongoengine import MongoEngine
+        from mongoengine import register_connection
 
         app = Flask(__name__)
         app.config.from_object('config')
-        dbmongo = MongoEngine(app)
+        register_connection("default",
+                        db=app.config["MONGODB_SETTINGS"]["db"],
+                        host=app.config["MONGODB_SETTINGS"]["host"],
+                        port=app.config["MONGODB_SETTINGS"]["port"],
+                        username=app.config["MONGODB_SETTINGS"]["username"],
+                        password=app.config["MONGODB_SETTINGS"]["password"],
+                        authentication_mechanism=app.config["MONGODB_SETTINGS"].get("auth_mech", "SCRAM-SHA-1"),
+                        authentication_source=app.config["MONGODB_SETTINGS"].get("auth_source", "proxy_database"),)
         appbuilder = AppBuilder(app, security_manager_class=SecurityManager)
 
     You can also create everything as an application factory.
