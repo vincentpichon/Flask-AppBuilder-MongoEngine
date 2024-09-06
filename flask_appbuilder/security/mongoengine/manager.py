@@ -39,8 +39,6 @@ class SecurityManager(BaseSecurityManager):
             F.A.B AppBuilder main object
         """
         super(SecurityManager, self).__init__(appbuilder)
-        log.warning("MongoEngine is deprecated and will be removed in version 5.")
-
         user_datamodel = MongoEngineInterface(self.user_model)
         if self.auth_type == c.AUTH_DB:
             self.userdbmodelview.datamodel = user_datamodel
@@ -66,6 +64,18 @@ class SecurityManager(BaseSecurityManager):
             self.permissionview_model
         )
         self.create_db()
+        
+        @self.jwt_manager.user_identity_loader
+        def user_identity_lookup(user):
+            # logging.debug(f'create cred for {user}')
+            return json.dumps(user, cls=JSONDateEncoder)
+
+        @self.jwt_manager.user_lookup_loader
+        def user_loader_callback_loader(args, identity):
+            # logging.info(f'identity {identity}')
+            # return ObjectId(str(identity[1:-1]))
+            return self.get_user_by_id(ObjectId(str(identity["sub"][1:-1])))
+        
 
     def find_register_user(self, registration_hash):
         return self.registeruser_model.objects(
@@ -203,18 +213,20 @@ class SecurityManager(BaseSecurityManager):
         return self.permission_model.objects(name=name).first()
 
     def exist_permission_on_roles(
-        self, view_name: str, permission_name: str, role_ids: List[int]
+            self, view_name: str, permission_name: str, role_ids: list[int],
     ) -> bool:
-        for role_id in role_ids:
-            role = self.role_model.objects(id=role_id).first()
-            permissions = role.permissions
-            if permissions:
-                for permission in permissions:
-                    if (view_name == permission.view_menu.name) and (
-                        permission_name == permission.permission.name
-                    ):
-                        return True
-        return False
+        p = Permission.objects(name=permission_name).first()  # pyright: ignore [reportAttributeAccessIssue]
+        v = ViewMenu.objects(name=view_name).first()  # pyright: ignore [reportAttributeAccessIssue]
+        if p and v:
+            pv = PermissionView.objects(  # pyright: ignore [reportAttributeAccessIssue]
+                Q(permission=p) & Q(view_menu=v)).first()
+            if not pv:
+                return False
+
+            return len(Role.objects(Q(id__in=role_ids) &  # pyright: ignore [reportAttributeAccessIssue]
+                                    Q(permissions__contains=pv.id)).all()) > 0
+        else:
+            return False
 
     def add_permission(self, name):
         """
